@@ -1,0 +1,608 @@
+﻿// カーネル関数を指定
+#pragma kernel ForceCS				// 操舵力を計算
+#pragma kernel IntegrateCS			// 速度, 位置を計算
+#pragma kernel setInteractionCS		// particleにエフェクト適用か計算、正ならインタラクションタイム付与
+#pragma kernel applyInteractionCS	// インタラクションタイム付与されたparticleの動きを計算
+#pragma kernel trackLifeCS			// particleのLifeを計算
+#pragma kernel flowFieldCS			// Flow Field Calc Purpose
+
+// Boidデータの構造体
+struct BoidData
+{
+	uint id;
+	float3 velocity; // 速度
+	float3 position; // 位置
+	float4 color;    // 色
+	float4 initColor;//初期色
+	float life;
+	float intLife;
+	float lifeDecMultiplier;
+	uint interactionEnabled; //インタラクション対象か
+	float interactionTime; //インタラクション時間
+};
+
+struct BoidTypesData
+{
+	float CohesionNeighbourhoodRadius;
+	float AlignmentNeighbourhoodRadius;
+	float SeparateNeighbourhoodRadius;
+	float MaxSpeed;
+	float MaxSteerForce;
+	float CohesionWeight;
+	float AlignmentWeight;
+	float SeparateWeight;
+
+};
+
+// スレッドグループのスレッドのサイズ
+#define SIMULATION_BLOCK_SIZE 256
+// EPSILON
+#define EPSILON 1e-3
+#define PI 3.14
+// import Simplex Noise
+#include "../Shaders/SimplexNoise3D.cginc"
+#include "../Shaders/PerlinNoise3D.cginc"
+#include "../Shaders/CurlNoise3D.cginc"
+
+
+// Boidデータのバッファ（読み取り用）
+StructuredBuffer<BoidData>   _BoidDataBufferRead;
+// Boidデータのバッファ（読み取り, 書き込み用）
+RWStructuredBuffer<BoidData> _BoidDataBufferWrite;
+// Boidの操舵力のバッファ（読み取り用）
+StructuredBuffer<float3>     _BoidForceBufferRead;
+// Boidの操舵力のバッファ（読み取り, 書き込み用）
+RWStructuredBuffer<float3>   _BoidForceBufferWrite;
+// ScriptableObjectデータのバッファ（読み取り用）
+StructuredBuffer<BoidTypesData> _BoidTypesBufferRead;
+
+int _MaxBoidObjectNum; // Boidオブジェクト数
+
+float _DeltaTime;      // 前フレームから経過した時間
+
+float _SeparateNeighborhoodRadius;  // 分離を適用する他の個体との距離
+float _AlignmentNeighborhoodRadius; // 整列を適用する他の個体との距離
+float _CohesionNeighborhoodRadius;  // 結合を適用する他の個体との距離
+
+float _MaxSpeed;        // 速度の最大値
+float _MaxSteerForce;   // 操舵する力の最大値
+
+float _SeparateWeight;  // 分離適用時の重み
+float _AlignmentWeight; // 整列適用時の重み
+float _CohesionWeight;  // 結合適用時の重み
+
+float4 _WallCenter;      // 壁の中心座標
+float4 _WallSize;        // 壁のサイズ
+float  _AvoidWallWeight; // 壁を避ける強さの重み
+float  _AvoidHandWeight;	 // 手を避ける強さの重み
+
+matrix _worldToCameraMatrix; // worldToCameraMatrix-viewport calculation purpose
+matrix _projectionMatrix;    // projectionMatrix-viewport calculation purpose
+
+float _effectRadius; //エフェクトが反映される範囲
+
+float _width;  //横幅
+float _height; //縦幅
+
+float _mouseX; //マウスx座標
+float _mouseY; //マウスy座標
+float _interactionTime; //インタラクション時間
+
+bool  _clicked; //mouse onCick event
+float _limitedAlphaLevel; //alpha level based on duration clicked
+
+float aspectRatio; //Aspect ratio
+
+float _convergence; //Curl Noise - convergence
+float _minAlpha;	// Min Alpha
+
+int _GroupNo;
+
+//Flow Field params
+float _squiggliness = 1 /200;
+float noise2D(float2 P);
+float4 permuteFf(float4 x);
+float2 fade(float2 t);
+
+float _NoiseScale;
+float _NoiseAspect;
+float _Time;
+
+
+// ベクトルの大きさを制限する
+float3 limit(float3 vec, float max)
+{
+	float length = sqrt(dot(vec, vec)); // 大きさ
+	return (length > max && length > 0) ? vec.xyz * (max / length) : vec.xyz;
+}
+
+// 壁に当たった時に逆向きの力を返す
+float3 avoidWall(float3 position)
+{
+	float3 wc = _WallCenter.xyz;
+	float3 ws = _WallSize.xyz;
+	float3 acc = float3(0, 0, 0);
+	// x
+	acc.x = (position.x < wc.x - ws.x * 0.5) ? acc.x + 1.0 * abs(cos(_DeltaTime)) : acc.x;
+	acc.x = (position.x > wc.x + ws.x * 0.5) ? acc.x - 1.0 * abs(cos(_DeltaTime)) : acc.x;
+	
+	// y
+	acc.y = (position.y < wc.y - ws.y * 0.5) ? acc.y + 1.0 * abs(sin(_DeltaTime)) : acc.y;
+	acc.y = (position.y > wc.y + ws.y * 0.5) ? acc.y - 1.0 * abs(sin(_DeltaTime)) : acc.y;
+	
+	// z
+	acc.z = (position.z < wc.z - ws.z * 0.5) ? acc.z + 1.0 * abs(tan(_DeltaTime)) : acc.z ;
+	acc.z = (position.z > wc.z + ws.z * 0.5) ? acc.z - 10.0 * abs(tan(_DeltaTime)) : acc.z;
+
+	return acc;
+}
+
+// Screen Conversion of point coordinates
+float4 positionScreenConversion(float3 bPosition) 
+{
+
+	aspectRatio = _width / _height;
+	matrix _matrix = mul(_projectionMatrix, _worldToCameraMatrix);   // Viewport matrix
+	float4 screenPos = mul(_matrix, float4(bPosition, 1));					// Viewport matrix X particle matrix
+	screenPos = (screenPos / screenPos.w);
+	screenPos.x = screenPos.x * aspectRatio;
+
+	return screenPos;
+}
+
+// calculate Distance between the mouse position and the particle, requires screen conversion output
+float calcDist(float4 screenPos) 
+{
+
+	aspectRatio = _width / _height;
+	float2 mousePos = float2 (_mouseX, _mouseY);					// 画面上のマウス座標
+	mousePos.x = mousePos.x * aspectRatio;							// アスペクト比調整
+
+	float2 diff = (mousePos.xy - screenPos.xy);						// 自身と他の個体の位置の差
+	float  dist = sqrt(dot(diff, diff));						    // 自身と他の個体の位置の距離
+
+	return dist;
+}
+
+
+
+// シェアードメモリ Boidデータ格納用
+groupshared BoidData boid_data[SIMULATION_BLOCK_SIZE];
+
+// 操舵力の計算用カーネル関数
+[numthreads(SIMULATION_BLOCK_SIZE, 1, 1)]
+void ForceCS
+(
+	uint3 DTid : SV_DispatchThreadID, // スレッド全体で固有のID
+	uint3 Gid : SV_GroupID,           // グループのID
+	uint3 GTid : SV_GroupThreadID,    // グループ内のスレッドID
+	uint  GI : SV_GroupIndex          // SV_GroupThreadIDを一次元にしたもの 0-255
+)
+{
+	const unsigned int P_ID = DTid.x; // 自身のID
+	float3 P_position = _BoidDataBufferRead[P_ID].position; // 自身の位置
+	float3 P_velocity = _BoidDataBufferRead[P_ID].velocity; // 自身の速度
+	uint P_idd = _BoidDataBufferRead[P_ID].id % _GroupNo; // 自身のID-STRUCT
+	uint P_typeId = P_idd % 2;
+	BoidTypesData boidType = _BoidTypesBufferRead[P_typeId]; // 5 ids to 2 type settings
+
+
+
+	
+
+	float3 force = float3(0, 0, 0); // 操舵力を初期化
+
+	float3 sepPosSum = float3(0, 0, 0); // 分離計算用 位置加算変数
+	int sepCount = 0; // 分離のために計算した他の個体の数のカウント用変数
+
+	float3 aliVelSum = float3(0, 0, 0); // 整列計算用 速度加算変数
+	int aliCount = 0; // 整列のために計算した他の個体の数のカウント用変数
+
+	float3 cohPosSum = float3(0, 0, 0); // 結合計算用 位置加算変数
+	int cohCount = 0; // 結合のために計算した他の個体の数のカウント用変数
+
+	// SIMULATION_BLOCK_SIZE（グループスレッド数）ごとの実行 (グループ数分実行)
+	[loop]
+	for (uint N_block_ID = 0; N_block_ID < (uint)_MaxBoidObjectNum;
+		N_block_ID += SIMULATION_BLOCK_SIZE)
+	{
+		// SIMULATION_BLOCK_SIZE分のBoidデータを、シェアードメモリに格納
+		boid_data[GI] = _BoidDataBufferRead[N_block_ID + GI];
+
+		// すべてのグループ共有アクセスが完了し、
+		// グループ内のすべてのスレッドがこの呼び出しに到達するまで、
+		// グループ内のすべてのスレッドの実行をブロックする
+		GroupMemoryBarrierWithGroupSync();
+
+		// Apply PERLIN NOISE
+		//float theta = noise2D(P_position.xy);
+		
+		float theta = perlinNoise3D(float3(P_position.xyz));
+		float x = sin((theta-0.5) *PI); // -0.5 0.5
+		float y = sin((theta-0.5) *PI);// 0 - 1
+
+		//P_position.x += (sin(_Time * PI)* 0.5 + 0.5)* x; //0 - 1
+		//P_position.y += (cos(_Time * PI)* 0.5 + 0.5)* y; //1 - 0 
+		
+		P_position.x += x;
+		P_position.y += y;
+
+
+
+		// 他の個体との計算
+		for (int N_tile_ID = 0; N_tile_ID < SIMULATION_BLOCK_SIZE; N_tile_ID++)
+		{
+			float3 N_position = boid_data[N_tile_ID].position; // 他の個体の位置
+			float3 N_velocity = boid_data[N_tile_ID].velocity; // 他の個体の速度
+
+
+			if (boid_data[N_tile_ID].id != P_idd){
+				continue;
+			}
+			float3 diff = P_position - N_position; // 自身と他の個体の位置の差
+			float  dist = sqrt(dot(diff, diff));   // 自身と他の個体の位置の距離
+
+			
+				// --- 分離（Separation） ---
+				if (dist > 0.0 && dist <= boidType.SeparateNeighbourhoodRadius)
+				{
+					// 他の個体の位置から自身へ向かうベクトル
+					float3 repulse = normalize(P_position - N_position);
+					// 自身と他の個体の位置の距離で割る（距離が遠ければ影響を小さく）
+					repulse /= dist;
+					sepPosSum += repulse; // 加算
+					sepCount++;           // 個体数カウント
+
+				}
+
+				// --- 整列（Alignment） ---
+				if (dist > 0.0 && dist <= boidType.AlignmentNeighbourhoodRadius)
+				{
+					aliVelSum += N_velocity; // 加算
+					aliCount++;              // 個体数カウント
+				}
+
+				// --- 結合（Cohesion） ---
+				if (dist > 0.0 && dist <= boidType.CohesionNeighbourhoodRadius)
+				{
+					cohPosSum += N_position; // 加算
+					cohCount++;              // 個体数カウント 
+				}
+		
+		}
+		GroupMemoryBarrierWithGroupSync();
+	}
+
+	// 操舵力（分離）
+	float3 sepSteer = (float3)0.0;
+	if (sepCount > 0)
+	{
+		sepSteer = sepPosSum / (float)sepCount;     // 平均を求める
+		sepSteer = normalize(sepSteer) * _MaxSpeed; // 最大速度に調整
+		sepSteer = sepSteer - P_velocity;           // 操舵力を計算
+		sepSteer = limit(sepSteer, _MaxSteerForce); // 操舵力を制限
+	}
+
+	// 操舵力（整列）
+	float3 aliSteer = (float3)0.0;
+	if (aliCount > 0)
+	{
+		aliSteer = aliVelSum / (float)aliCount;     // 近い個体の速度の平均を求める
+		aliSteer = normalize(aliSteer) * _MaxSpeed; // 最大速度に調整
+		aliSteer = aliSteer - P_velocity;           // 操舵力を計算
+		aliSteer = limit(aliSteer, _MaxSteerForce); // 操舵力を制限
+	}
+	// 操舵力（結合）
+	float3 cohSteer = (float3)0.0;
+	if (cohCount > 0)
+	{
+		cohPosSum = cohPosSum / (float)cohCount;    // 近い個体の位置の平均を求める
+		cohSteer = cohPosSum - P_position;      // 平均位置方向へのベクトルを求める
+		cohSteer = normalize(cohSteer) * _MaxSpeed; // 最大速度に調整
+		cohSteer = cohSteer - P_velocity;           // 操舵力を計算
+		cohSteer = limit(cohSteer, _MaxSteerForce); // 操舵力を制限
+	}
+	force += aliSteer * boidType.AlignmentWeight; // 操舵力に整列する力を加える
+	force += cohSteer * boidType.CohesionWeight;  // 操舵力に結合する力を加える
+	force += sepSteer * boidType.SeparateWeight;  // 操舵力に分離する力を加える
+
+
+	
+
+
+
+
+
+
+	_BoidForceBufferWrite[P_ID] = force; // 書き込み
+}
+
+// 速度, 位置, Alpha, Life計算用カーネル関数
+[numthreads(SIMULATION_BLOCK_SIZE, 1, 1)]
+void IntegrateCS
+(
+	uint3 DTid : SV_DispatchThreadID // スレッド全体で固有のID
+)
+{
+	const unsigned int P_ID = DTid.x;          // インデックスを取得
+											           
+	BoidData b = _BoidDataBufferWrite[P_ID];   // 現在のBoidデータを読み込む
+	float3 force = _BoidForceBufferRead[P_ID]; // 操舵力を読み込む
+	
+	// 壁に近づいたら反発する力を与える
+	force += avoidWall(b.position) * _AvoidWallWeight; 
+
+	b.velocity += force * _DeltaTime;          // 操舵力を速度に適用
+	b.velocity = limit(b.velocity, _MaxSpeed); // 速度を制限
+	b.position += b.velocity * _DeltaTime;     // 位置を更新
+
+
+	//　BoidのAlpha値を速度で調整する
+	
+	float velMag = sqrt(dot(b.velocity, b.velocity)); // Velocity Magnitude
+	float adjAlpha = clamp (velMag / _MaxSpeed, _minAlpha, 1);
+	b.color.a = adjAlpha;
+
+			           
+	_BoidDataBufferWrite[P_ID] = b;            // 計算結果を書き
+}
+
+
+
+
+//particleにエフェクト適用か計算、正ならインタラクションタイム付与用カーネル関数
+[numthreads(SIMULATION_BLOCK_SIZE, 1, 1)]
+void setInteractionCS
+(
+	uint3 DTid : SV_DispatchThreadID // スレッド全体で固有のID
+)
+{
+	const unsigned int P_ID = DTid.x;		// インデックスを取得
+	BoidData b = _BoidDataBufferWrite[P_ID];// STRUCT
+
+	float dist = calcDist(positionScreenConversion(b.position));
+
+	_effectRadius = _effectRadius * _limitedAlphaLevel;  //範囲の拡大
+
+	if (dist <= _effectRadius )
+	{
+
+		//b.color = float4(1.0, 1.0, 1.0, 1.0);// white
+		if (b.interactionEnabled == 0) {
+			b.interactionEnabled = 1;
+			b.interactionTime = _interactionTime;
+			b.lifeDecMultiplier = 2.0;
+		}
+	}
+	if (dist > _effectRadius)
+	{
+
+		//b.color = float4(1.0, 0.0, 0.0, 1.0);// red
+		if (b.interactionEnabled == 1) {
+			
+			b.interactionTime = b.interactionTime;
+		}
+
+	}
+	
+
+
+	_BoidDataBufferWrite[P_ID] = b;
+}
+
+
+
+// インタラクションタイム付与されたparticleの動きを計算
+[numthreads(SIMULATION_BLOCK_SIZE, 1, 1)]
+void applyInteractionCS
+(
+	uint3 DTid : SV_DispatchThreadID // スレッド全体で固有のID
+)
+{
+	const unsigned int P_ID = DTid.x;// インデックスを取得
+
+	BoidData b = _BoidDataBufferWrite[P_ID];
+	float3 force = _BoidForceBufferRead[P_ID]; // 操舵力を読み込む
+	
+	if (b.interactionTime > 0){
+		b.interactionTime -= _DeltaTime;
+		float ratio = b.interactionTime / _interactionTime;
+		ratio = clamp(ratio, 0, 1);
+		
+		//b.color = lerp(float4(b.initColor.rgb, 0), float4(1, 0.5, 0, b.interactionTime), b.interactionTime);
+		
+
+		// 選択されたときに逆向きの力を返す
+		float aspectRatio = _width / _height;
+
+		matrix _matrix = mul(_projectionMatrix, _worldToCameraMatrix);			// Viewport matrix
+		float4 screenPos = mul(_matrix, float4(b.position, 1));					// Viewport matrix X particle matrix
+		float2 mousePos = float2(_mouseX, _mouseY);
+		screenPos = (screenPos / screenPos.w);
+		screenPos.x = screenPos.x * aspectRatio;
+
+
+		float dist = calcDist(screenPos);// 自身と他の個体の位置の距離
+		
+		
+		float2 repulse = normalize(screenPos.xy - mousePos.xy); // 他の個体の位置から自身へ向かうベクトル
+		
+		
+		repulse /= dist;										// Repulseを距離で割り遠ければrepulseを少なめに
+		repulse *= _MaxSpeed;									// 最大速度に調整
+		repulse = repulse + b.velocity.xy;						// 操舵力を計算
+
+		//force += curlNoise(b.position * _DeltaTime * _convergence) - b.velocity.xyz;//Curl Noiseを計算
+		force += float3(repulse.x, repulse.y, 1) * _AvoidHandWeight;
+		
+		float3 curlNoiseVal = (curlNoise(b.position * _DeltaTime * _convergence) - b.velocity.xyz);//Curl Noiseを計算
+		force.y -= 0.1* curlNoiseVal.y;
+		//force.z += 0.1 * curlNoiseVal.z;
+
+
+		force -= 0.5 * normalize(b.velocity.xyz);
+
+
+		b.velocity += force * _DeltaTime;          // 操舵力を速度に適用
+		b.velocity = limit(b.velocity, _MaxSpeed); // 速度を制限
+		b.position += b.velocity * _DeltaTime;     // 位置を更新
+
+
+		// COLOR
+		//b.color = lerp(float4(1, 1, 0, 1), b.initColor, ratio);
+		
+		float4 coln = b.color-  b.initColor;
+		float rgbSum = coln.r + coln.g + coln.b;
+		
+
+		b.color = lerp(b.initColor, float4(0.96, 0.85, 0.21, 1.0), sin(PI * (1 - ratio)));
+		
+
+
+		b.interactionEnabled = round(ratio);
+		
+		
+		/*b.color = lerp(b.initColor, float4(1, 1, 0, 1), sin(3.14 * 2* ratio));*/ // colour changes to yellow and comes back to the initial colour
+		/*b.color = lerp(b.initColor, lerp(b.initColor, float4(1, 1, 0, 1), ratio), ratio);*/
+		//b.color = lerp(b.initColor, lerp(float4(1.0, 1.0, 0, 1)+ b.initColor, b.initColor, (1 - ratio)), ratio);
+		
+
+
+	}
+	
+
+	_BoidDataBufferWrite[P_ID] = b;
+
+}
+
+
+
+// TRACK LIFE TIME
+[numthreads(SIMULATION_BLOCK_SIZE, 1, 1)]
+void trackLifeCS
+(
+	uint3 DTid : SV_DispatchThreadID // スレッド全体で固有のID
+)
+{
+	const unsigned int P_ID = DTid.x;// インデックスを取得
+
+	BoidData b = _BoidDataBufferWrite[P_ID];
+	// Update Life Time and apply scale based on Life
+	b.life -= (_DeltaTime * b.lifeDecMultiplier);
+	b.life = (b.life < 0) ? 0 : b.life;
+	if (b.life == 0)
+	{
+		b.position = float3(0, 0, _WallSize.z/2);
+		b.velocity = b.velocity / 20.0;
+		b.color = b.initColor;
+		b.life = b.intLife;
+		b.lifeDecMultiplier = 1.0;
+
+	}
+
+	
+	float3 force = _BoidForceBufferRead[P_ID]; // 操舵力を読み込む
+	
+
+	_BoidDataBufferWrite[P_ID] = b;
+
+}
+
+
+// Flow Field
+[numthreads(SIMULATION_BLOCK_SIZE, 1, 1)]
+void flowFieldCS
+(
+	uint3 DTid : SV_DispatchThreadID // スレッド全体で固有のID
+)
+{
+	const unsigned int P_ID = DTid.x;// インデックスを取得
+}
+
+float noise2D(float2 P)
+{
+	float4 Pi = floor(P.xyxy) + float4(0.0, 0.0, 1.0, 1.0);
+	float4 Pf = frac(P.xyxy) - float4(0.0, 0.0, 1.0, 1.0);
+
+	float4 ix = Pi.xzxz;
+	float4 iy = Pi.yyww;
+	float4 fx = Pf.xzxz;
+	float4 fy = Pf.yyww;
+
+	float4 i = permuteFf(permuteFf(ix) + iy);
+
+	float4 gx = frac(i / 31.0) * 2.0 - 1.0;
+	float4 gy = abs(gx) - 0.5;
+	float4 tx = floor(gx + 0.5);
+	gx = gx - tx;
+
+	float2 g00 = float2(gx.x, gy.x);
+	float2 g10 = float2(gx.y, gy.y);
+	float2 g01 = float2(gx.z, gy.z);
+	float2 g11 = float2(gx.w, gy.w);
+
+
+	float4 norm = taylorInvSqrt(float4(dot(g00, g00), dot(g01, g01), dot(g01, g01),dot(g11, g11)));
+	g00 *= norm.x;
+	g01 *= norm.y;
+	g10 *= norm.z;
+	g11 *= norm.w;
+
+	float n00 = dot(g00, float2(fx.x, fy.x));
+	float n10 = dot(g10, float2(fx.y, fy.x));
+	float n01 = dot(g01, float2(fx.z, fy.z));
+	float n11 = dot(g11, float2(fx.w, fy.w));
+
+	float2 fade_xy = fade(Pf.xy);
+	float2 n_x = lerp(float2(n00, n01), float2(n10, n11), fade_xy.x);
+	float n_xy = lerp(n_x.x, n_x.y, fade_xy.y);
+
+	return 2.3 * n_xy;
+}
+
+float4 permuteFf(float4 x)
+{
+	return fmod(34.0 * pow(x, 2) + x, 289.0);
+}
+
+float2 fade(float2 t)
+{
+	return 6.0 * pow(t, 5.0) - 15.0 * pow(t, 4.0) + 10.0 * pow(t, 3.0);
+
+}
+
+/////////////////////////////////
+
+
+
+//float2 hash(in float2 x)
+//{
+//	const float2 k = float2(0.3183099, 0.3678794);
+//	x = x * k + k.yx;
+//	return -1.0 + 2.0 * frac(16.0 * k * frac(x.x * x.y * (x.x + x.y)));
+//}
+//
+//float3 noised(in float2 p)
+//{
+//	float2 i = floor(p);
+//	float2 f = frac(p);
+//
+//	//quintic interpolation
+//	float2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+//	float2 du = 30.0 * f * f * (f * (f - 2.0) + 1.0);
+//
+//	float2 ga = hash(i + float2(0.0, 0.0));
+//	float2 gb = hash(i + float2(1.0, 0.0));
+//	float2 gc = hash(i + float2(0.0, 1.0));
+//	float2 gd = hash(i + float2(1.0, 1.0));
+//
+//
+//	float va = dot(ga, f - float2(0.0, 0.0));
+//	float vb = dot(gb, f - float2(1.0, 0.0));
+//	float vc = dot(gc, f - float2(0.0, 1.0));
+//	float vd = dot(gd, f - float2(1.0, 1.0));
+//
+//	return float3(va + u.x * (vb - va) + u.y * (vc - va) + u.x * u.y * (va - vb - vc + vd),
+//		ga + u.x * (gb - ga) + u.y * (gc - ga) + u.x * u.y * (ga - gb - gc + gd) +
+//		du * (u.yx * (va - vb - vc + vd) + float2(vb, vc) - va));
+//}

@@ -91,7 +91,7 @@ Shader "Hidden/ImageEffectShader"
                 }
 
                 //////////////////////////////////////////////////////
-
+                
                 float random(float2 seeds)
                 {
                     return frac(sin(dot(seeds, float2(12.9898, 78.233))) * 43758.5453);
@@ -170,7 +170,18 @@ Shader "Hidden/ImageEffectShader"
                 }
 
                 float _NoiseScale;
-                float _NoiseAspect;
+                float _NoiseAspect; 
+
+                float SpoutX;
+                float SpoutY;
+
+                float circle(float2 _uv, float _radius) {
+                    float2 dist = _uv - float2(SpoutX, SpoutY);
+                    return 1. - smoothstep(_radius - (_radius * 0.01),
+                        _radius + (_radius * 0.01),
+                        dot(dist, dist) * 4.0);
+                }
+                
 
                 float4 frag(v2f_img i) : SV_Target
                 {
@@ -179,8 +190,12 @@ Shader "Hidden/ImageEffectShader"
                     float4 prevColor = tex2D(_Prev, uv);
                     
 
+                    // debug Spout 
+                    float output = circle(uv, 0.004);
+                    float3 debugCircle = float3(output, output, output)*float3(1, 0, 0);
 
-
+                    
+                    
                      //return float4(color.rgb*color.rgb, color.a);
 
                     float4 baseColor = float4(color.rgb, color.a);
@@ -200,7 +215,7 @@ Shader "Hidden/ImageEffectShader"
                     ////////////////OPTION 2
                     float4 blendedCurPrev = baseColor * _Ratio + prevColor * (1 - _Ratio);
                     baseColor.rgb = BlendColor(baseColor.rgb, blendedCurPrev);
-                    return float4(BlendLinearLight(baseColor.rgb, blendColor), baseColor.a);
+                    return float4(BlendLinearLight(baseColor.rgb, blendColor)+debugCircle, baseColor.a);
 
                     // BlendScreen
                 }

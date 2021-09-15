@@ -41,8 +41,6 @@ struct BoidTypesData
 #define PI 3.14
 // import Simplex Noise
 #include "../Shaders/SimplexNoise3D.cginc"
-#include "../Shaders/PerlinNoise3D.cginc"
-#include "../Shaders/CurlNoise3D.cginc"
 
 
 // Boidデータのバッファ（読み取り用）
@@ -99,14 +97,18 @@ float _minAlpha;	// Min Alpha
 int _GroupNo;
 
 //Flow Field params
-float _squiggliness = 1 /200;
+float _squiggliness = 1 / 200;
 float noise2D(float2 P);
 float4 permuteFf(float4 x);
 float2 fade(float2 t);
 
+float random(float2 seeds);
+float2 random2(float2 seeds);
+float3 random3(float3 seeds);
+float perlinNoise3D(float3 seeds);
+
 float _NoiseScale;
 float _NoiseAspect;
-float _Time;
 
 
 // ベクトルの大きさを制限する
@@ -125,20 +127,20 @@ float3 avoidWall(float3 position)
 	// x
 	acc.x = (position.x < wc.x - ws.x * 0.5) ? acc.x + 1.0 * abs(cos(_DeltaTime)) : acc.x;
 	acc.x = (position.x > wc.x + ws.x * 0.5) ? acc.x - 1.0 * abs(cos(_DeltaTime)) : acc.x;
-	
+
 	// y
 	acc.y = (position.y < wc.y - ws.y * 0.5) ? acc.y + 1.0 * abs(sin(_DeltaTime)) : acc.y;
 	acc.y = (position.y > wc.y + ws.y * 0.5) ? acc.y - 1.0 * abs(sin(_DeltaTime)) : acc.y;
-	
+
 	// z
-	acc.z = (position.z < wc.z - ws.z * 0.5) ? acc.z + 1.0 * abs(tan(_DeltaTime)) : acc.z ;
-	acc.z = (position.z > wc.z + ws.z * 0.5) ? acc.z - 10.0 * abs(tan(_DeltaTime)) : acc.z;
+	acc.z = (position.z < wc.z - ws.z * 0.5) ? acc.z + 1.0 * abs(tan(_DeltaTime)) : acc.z;
+	acc.z = (position.z > wc.z + ws.z * 0.5) ? acc.z - 1.0 * abs(tan(_DeltaTime)) : acc.z;
 
 	return acc;
 }
 
 // Screen Conversion of point coordinates
-float4 positionScreenConversion(float3 bPosition) 
+float4 positionScreenConversion(float3 bPosition)
 {
 
 	aspectRatio = _width / _height;
@@ -151,7 +153,7 @@ float4 positionScreenConversion(float3 bPosition)
 }
 
 // calculate Distance between the mouse position and the particle, requires screen conversion output
-float calcDist(float4 screenPos) 
+float calcDist(float4 screenPos)
 {
 
 	aspectRatio = _width / _height;
@@ -164,7 +166,26 @@ float calcDist(float4 screenPos)
 	return dist;
 }
 
+// CurlNoise
+float3 curlNoise(float3 coord)
+{
+	float3 dx = float3(EPSILON, 0.0, 0.0);
+	float3 dy = float3(0.0, EPSILON, 0.0);
+	float3 dz = float3(0.0, 0.0, EPSILON);
 
+	float3 dpdx0 = simplexNoise(coord - dx);
+	float3 dpdx1 = simplexNoise(coord + dx);
+	float3 dpdy0 = simplexNoise(coord - dy);
+	float3 dpdy1 = simplexNoise(coord + dy);
+	float3 dpdz0 = simplexNoise(coord - dz);
+	float3 dpdz1 = simplexNoise(coord + dz);
+
+	float x = dpdy1.z - dpdy0.z + dpdz1.y - dpdz0.y;
+	float y = dpdz1.x - dpdz0.x + dpdx1.z - dpdx0.z;
+	float z = dpdx1.y - dpdx0.y + dpdy1.x - dpdy0.x;
+
+	return float3(x, y, z) / EPSILON * 2.0;
+}
 
 // シェアードメモリ Boidデータ格納用
 groupshared BoidData boid_data[SIMULATION_BLOCK_SIZE];
@@ -188,7 +209,7 @@ void ForceCS
 
 
 
-	
+
 
 	float3 force = float3(0, 0, 0); // 操舵力を初期化
 
@@ -216,16 +237,19 @@ void ForceCS
 
 		// Apply PERLIN NOISE
 		//float theta = noise2D(P_position.xy);
-		
-		float theta = perlinNoise3D(float3(P_position.xyz));
-		float x = sin((theta-0.5) *PI); // -0.5 0.5
-		float y = sin((theta-0.5) *PI);// 0 - 1
 
-		//P_position.x += (sin(_Time * PI)* 0.5 + 0.5)* x; //0 - 1
-		//P_position.y += (cos(_Time * PI)* 0.5 + 0.5)* y; //1 - 0 
-		
-		P_position.x += x;
-		P_position.y += y;
+		float theta = perlinNoise3D(float3(P_position.xyz * _squiggliness * _DeltaTime * 10)) * 7;
+		float x = cos(theta * 2 * PI);
+		float y = sin(theta * 2 * PI);
+
+		P_position += sin(x * _DeltaTime) * x;
+		P_position += cos(y * _DeltaTime) * y;
+
+		//P_position += x;
+		//P_position += y;
+
+
+
 
 
 
@@ -236,39 +260,39 @@ void ForceCS
 			float3 N_velocity = boid_data[N_tile_ID].velocity; // 他の個体の速度
 
 
-			if (boid_data[N_tile_ID].id != P_idd){
+			if (boid_data[N_tile_ID].id != P_idd) {
 				continue;
 			}
 			float3 diff = P_position - N_position; // 自身と他の個体の位置の差
 			float  dist = sqrt(dot(diff, diff));   // 自身と他の個体の位置の距離
 
-			
+
 				// --- 分離（Separation） ---
-				if (dist > 0.0 && dist <= boidType.SeparateNeighbourhoodRadius)
-				{
-					// 他の個体の位置から自身へ向かうベクトル
-					float3 repulse = normalize(P_position - N_position);
-					// 自身と他の個体の位置の距離で割る（距離が遠ければ影響を小さく）
-					repulse /= dist;
-					sepPosSum += repulse; // 加算
-					sepCount++;           // 個体数カウント
+			if (dist > 0.0 && dist <= boidType.SeparateNeighbourhoodRadius)
+			{
+				// 他の個体の位置から自身へ向かうベクトル
+				float3 repulse = normalize(P_position - N_position);
+				// 自身と他の個体の位置の距離で割る（距離が遠ければ影響を小さく）
+				repulse /= dist;
+				sepPosSum += repulse; // 加算
+				sepCount++;           // 個体数カウント
 
-				}
+			}
 
-				// --- 整列（Alignment） ---
-				if (dist > 0.0 && dist <= boidType.AlignmentNeighbourhoodRadius)
-				{
-					aliVelSum += N_velocity; // 加算
-					aliCount++;              // 個体数カウント
-				}
+			// --- 整列（Alignment） ---
+			if (dist > 0.0 && dist <= boidType.AlignmentNeighbourhoodRadius)
+			{
+				aliVelSum += N_velocity; // 加算
+				aliCount++;              // 個体数カウント
+			}
 
-				// --- 結合（Cohesion） ---
-				if (dist > 0.0 && dist <= boidType.CohesionNeighbourhoodRadius)
-				{
-					cohPosSum += N_position; // 加算
-					cohCount++;              // 個体数カウント 
-				}
-		
+			// --- 結合（Cohesion） ---
+			if (dist > 0.0 && dist <= boidType.CohesionNeighbourhoodRadius)
+			{
+				cohPosSum += N_position; // 加算
+				cohCount++;              // 個体数カウント 
+			}
+
 		}
 		GroupMemoryBarrierWithGroupSync();
 	}
@@ -306,14 +330,6 @@ void ForceCS
 	force += cohSteer * boidType.CohesionWeight;  // 操舵力に結合する力を加える
 	force += sepSteer * boidType.SeparateWeight;  // 操舵力に分離する力を加える
 
-
-	
-
-
-
-
-
-
 	_BoidForceBufferWrite[P_ID] = force; // 書き込み
 }
 
@@ -325,12 +341,12 @@ void IntegrateCS
 )
 {
 	const unsigned int P_ID = DTid.x;          // インデックスを取得
-											           
+
 	BoidData b = _BoidDataBufferWrite[P_ID];   // 現在のBoidデータを読み込む
 	float3 force = _BoidForceBufferRead[P_ID]; // 操舵力を読み込む
-	
+
 	// 壁に近づいたら反発する力を与える
-	force += avoidWall(b.position) * _AvoidWallWeight; 
+	force += avoidWall(b.position) * _AvoidWallWeight;
 
 	b.velocity += force * _DeltaTime;          // 操舵力を速度に適用
 	b.velocity = limit(b.velocity, _MaxSpeed); // 速度を制限
@@ -338,12 +354,14 @@ void IntegrateCS
 
 
 	//　BoidのAlpha値を速度で調整する
-	
+
 	float velMag = sqrt(dot(b.velocity, b.velocity)); // Velocity Magnitude
-	float adjAlpha = clamp (velMag / _MaxSpeed, _minAlpha, 1);
+	float adjAlpha = clamp(velMag / _MaxSpeed, _minAlpha, 1);
 	b.color.a = adjAlpha;
 
-			           
+
+
+
 	_BoidDataBufferWrite[P_ID] = b;            // 計算結果を書き
 }
 
@@ -364,7 +382,7 @@ void setInteractionCS
 
 	_effectRadius = _effectRadius * _limitedAlphaLevel;  //範囲の拡大
 
-	if (dist <= _effectRadius )
+	if (dist <= _effectRadius)
 	{
 
 		//b.color = float4(1.0, 1.0, 1.0, 1.0);// white
@@ -379,12 +397,12 @@ void setInteractionCS
 
 		//b.color = float4(1.0, 0.0, 0.0, 1.0);// red
 		if (b.interactionEnabled == 1) {
-			
+
 			b.interactionTime = b.interactionTime;
 		}
 
 	}
-	
+
 
 
 	_BoidDataBufferWrite[P_ID] = b;
@@ -403,14 +421,14 @@ void applyInteractionCS
 
 	BoidData b = _BoidDataBufferWrite[P_ID];
 	float3 force = _BoidForceBufferRead[P_ID]; // 操舵力を読み込む
-	
-	if (b.interactionTime > 0){
+
+	if (b.interactionTime > 0) {
 		b.interactionTime -= _DeltaTime;
 		float ratio = b.interactionTime / _interactionTime;
 		ratio = clamp(ratio, 0, 1);
-		
+
 		//b.color = lerp(float4(b.initColor.rgb, 0), float4(1, 0.5, 0, b.interactionTime), b.interactionTime);
-		
+
 
 		// 選択されたときに逆向きの力を返す
 		float aspectRatio = _width / _height;
@@ -423,24 +441,23 @@ void applyInteractionCS
 
 
 		float dist = calcDist(screenPos);// 自身と他の個体の位置の距離
-		
-		
+
+
+
 		float2 repulse = normalize(screenPos.xy - mousePos.xy); // 他の個体の位置から自身へ向かうベクトル
-		
-		
-		repulse /= dist;										// Repulseを距離で割り遠ければrepulseを少なめに
-		repulse *= _MaxSpeed;									// 最大速度に調整
-		repulse = repulse + b.velocity.xy;						// 操舵力を計算
+
+
+		repulse /= dist;								// Repulseを距離で割り遠ければrepulseを少なめに
+		repulse *= _MaxSpeed;							// 最大速度に調整
+		repulse = repulse + b.velocity.xy;				// 操舵力を計算
 
 		//force += curlNoise(b.position * _DeltaTime * _convergence) - b.velocity.xyz;//Curl Noiseを計算
+
 		force += float3(repulse.x, repulse.y, 1) * _AvoidHandWeight;
-		
-		float3 curlNoiseVal = (curlNoise(b.position * _DeltaTime * _convergence) - b.velocity.xyz);//Curl Noiseを計算
-		force.y -= 0.1* curlNoiseVal.y;
-		//force.z += 0.1 * curlNoiseVal.z;
+		force.y -= 0.1 * (curlNoise(b.position * _DeltaTime * _convergence) - b.velocity.xyz).y;//Curl Noiseを計算
 
 
-		force -= 0.5 * normalize(b.velocity.xyz);
+		force -= 1.3 * normalize(b.velocity.xyz);
 
 
 		b.velocity += force * _DeltaTime;          // 操舵力を速度に適用
@@ -450,26 +467,32 @@ void applyInteractionCS
 
 		// COLOR
 		//b.color = lerp(float4(1, 1, 0, 1), b.initColor, ratio);
-		
-		float4 coln = b.color-  b.initColor;
+
+		float4 coln = b.color - b.initColor;
 		float rgbSum = coln.r + coln.g + coln.b;
-		
+		//if (rgbSum < 0.5) {
+		//	
+		//}
 
-		b.color = lerp(b.initColor, float4(0.96, 0.85, 0.21, 1.0), sin(PI * (1 - ratio)));
-		
-
+		b.color = lerp(b.initColor, float4(0.96, 0.85, 0.21, ratio), sin(PI * (1 - ratio)));
+		//if (b.id == 0) {
+		//	b.color = lerp(b.initColor, float4(1, 1, 0, ratio), sin(PI * (1 - ratio)));
+		//}
+		//if (b.id == 1) {
+		//	b.color = lerp(b.initColor, float4(1, 0, 0, ratio), sin(PI * (1 - ratio)));
+		//}
 
 		b.interactionEnabled = round(ratio);
-		
-		
+
+
 		/*b.color = lerp(b.initColor, float4(1, 1, 0, 1), sin(3.14 * 2* ratio));*/ // colour changes to yellow and comes back to the initial colour
 		/*b.color = lerp(b.initColor, lerp(b.initColor, float4(1, 1, 0, 1), ratio), ratio);*/
 		//b.color = lerp(b.initColor, lerp(float4(1.0, 1.0, 0, 1)+ b.initColor, b.initColor, (1 - ratio)), ratio);
-		
+
 
 
 	}
-	
+	//col = lerp(col, float4(1, 0.5, 0, col.a), _limitedAlphaLevel);
 
 	_BoidDataBufferWrite[P_ID] = b;
 
@@ -492,7 +515,7 @@ void trackLifeCS
 	b.life = (b.life < 0) ? 0 : b.life;
 	if (b.life == 0)
 	{
-		b.position = float3(0, 0, _WallSize.z/2);
+		b.position = float3(0, 0, _WallSize.z / 2);
 		b.velocity = b.velocity / 20.0;
 		b.color = b.initColor;
 		b.life = b.intLife;
@@ -500,9 +523,9 @@ void trackLifeCS
 
 	}
 
-	
+
 	float3 force = _BoidForceBufferRead[P_ID]; // 操舵力を読み込む
-	
+
 
 	_BoidDataBufferWrite[P_ID] = b;
 
@@ -542,7 +565,7 @@ float noise2D(float2 P)
 	float2 g11 = float2(gx.w, gy.w);
 
 
-	float4 norm = taylorInvSqrt(float4(dot(g00, g00), dot(g01, g01), dot(g01, g01),dot(g11, g11)));
+	float4 norm = taylorInvSqrt(float4(dot(g00, g00), dot(g01, g01), dot(g01, g01), dot(g11, g11)));
 	g00 *= norm.x;
 	g01 *= norm.y;
 	g10 *= norm.z;
@@ -572,7 +595,83 @@ float2 fade(float2 t)
 }
 
 /////////////////////////////////
+float random(float2 seeds)
+{
+	return frac(sin(dot(seeds, float2(12.9898, 78.233))) * 43758.5453);
+}
 
+float2 random2(float2 seeds)
+{
+	seeds = float2(dot(seeds, float2(127.1, 311.7)),
+		dot(seeds, float2(269.5, 183.3)));
+
+	return frac(sin(seeds) * 43758.5453123);
+}
+
+float3 random3(float3 seeds)
+{
+	seeds = float3(dot(seeds, float3(127.1, 311.7, 542.3)),
+		dot(seeds, float3(269.5, 183.3, 461.7)),
+		dot(seeds, float3(732.1, 845.3, 231.7)));
+
+	return frac(sin(seeds) * 43758.5453123);
+}
+
+float perlinNoise3D(float3 seeds)
+{
+	float3 i = floor(seeds);
+	float3 f = frac(seeds);
+
+	float3 i000 = i + float3(0, 0, 0);
+	float3 i100 = i + float3(1, 0, 0);
+	float3 i010 = i + float3(0, 1, 0);
+	float3 i110 = i + float3(1, 1, 0);
+	float3 i001 = i + float3(0, 0, 1);
+	float3 i101 = i + float3(1, 0, 1);
+	float3 i011 = i + float3(0, 1, 1);
+	float3 i111 = i + float3(1, 1, 1);
+
+	float3 f000 = f - float3(0, 0, 0);
+	float3 f100 = f - float3(1, 0, 0);
+	float3 f010 = f - float3(0, 1, 0);
+	float3 f110 = f - float3(1, 1, 0);
+	float3 f001 = f - float3(0, 0, 1);
+	float3 f101 = f - float3(1, 0, 1);
+	float3 f011 = f - float3(0, 1, 1);
+	float3 f111 = f - float3(1, 1, 1);
+
+	float3 g000 = normalize(-1 + 2 * random3(i000));
+	float3 g100 = normalize(-1 + 2 * random3(i100));
+	float3 g010 = normalize(-1 + 2 * random3(i010));
+	float3 g110 = normalize(-1 + 2 * random3(i110));
+	float3 g001 = normalize(-1 + 2 * random3(i001));
+	float3 g101 = normalize(-1 + 2 * random3(i101));
+	float3 g011 = normalize(-1 + 2 * random3(i011));
+	float3 g111 = normalize(-1 + 2 * random3(i111));
+
+	float v000 = dot(g000, f000);
+	float v100 = dot(g100, f100);
+	float v010 = dot(g010, f010);
+	float v110 = dot(g110, f110);
+	float v001 = dot(g001, f001);
+	float v101 = dot(g101, f101);
+	float v011 = dot(g011, f011);
+	float v111 = dot(g111, f111);
+
+	float3 p = smoothstep(0, 1, f);
+
+	float v000v100 = lerp(v000, v100, p.x);
+	float v010v110 = lerp(v010, v110, p.x);
+	float v001v101 = lerp(v001, v101, p.x);
+	float v011v111 = lerp(v011, v111, p.x);
+
+	float v000v100v010v110 = lerp(v000v100, v010v110, p.y);
+	float v001v101v011v111 = lerp(v001v101, v011v111, p.y);
+
+	return lerp(v000v100v010v110,
+		v001v101v011v111, p.z) * 0.5 + 0.5;
+}
+/////////////////////////////////
 
 
 //float2 hash(in float2 x)

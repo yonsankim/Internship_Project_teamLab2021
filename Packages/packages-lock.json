@@ -151,6 +151,15 @@
         "com.unity.modules.imgui": "1.0.0"
       }
     },
+    "jp.keijiro.klak.spout": {
+      "version": "2.0.3",
+      "depth": 0,
+      "source": "registry",
+      "dependencies": {
+        "com.unity.modules.screencapture": "1.0.0"
+      },
+      "url": "https://registry.npmjs.com"
+    },
     "jp.keijiro.noiseshader": {
       "version": "file:C:/Users/kimyonsan/Downloads/NoiseShader-master/NoiseShader-master/Packages/jp.keijiro.noiseshader",
       "depth": 0,

@@ -9,7 +9,7 @@ namespace BoidsSimulationOnGPU
     {
         // Boidデータの構造体
         [System.Serializable]
-        struct BoidData
+        public struct BoidData
         {
             public uint Id;
             public Vector3 Velocity; // 速度
@@ -24,7 +24,7 @@ namespace BoidsSimulationOnGPU
         }
 
 
-        struct BoidTypesData
+        public struct BoidTypesData
         {
             public float CohesionNeighbourhoodRadius;
             public float AlignmentNeighbourhoodRadius;
@@ -119,6 +119,11 @@ namespace BoidsSimulationOnGPU
         public float NoiseScale;
         public float NoiseAspect;
 
+
+        // OSCs
+        
+        public string SensorOscAddress = "/point";
+
         #endregion
 
         #region Built-in Resources
@@ -128,17 +133,17 @@ namespace BoidsSimulationOnGPU
 
         #region Private Resources
         // Boidの操舵力（Force）を格納したバッファ
-        ComputeBuffer _boidForceBuffer;
+        public ComputeBuffer _boidForceBuffer;
         // Boidの基本データ（速度, 位置, Transformなど）を格納したバッファ
-        ComputeBuffer _boidDataBuffer;
+        public ComputeBuffer _boidDataBuffer;
         // Boidの種類データを格納したバッファ
-        ComputeBuffer _boidTypesBuffer;
+        public ComputeBuffer _boidTypesBuffer;
         #endregion
 
 
         #region Scriptable Objects
         public BoidsType _boidsTypesData;
-        
+
         #endregion
 
         #region Accessors
@@ -172,12 +177,8 @@ namespace BoidsSimulationOnGPU
         #endregion
 
         #region MonoBehaviour Functions
-        void Start()
+        protected virtual void Start()
         {
-            // Set FRAME RATE
-            Application.targetFrameRate = 60;
-
-
             // バッファを初期化
             InitBuffer();
             if (Camera.main)
@@ -190,18 +191,20 @@ namespace BoidsSimulationOnGPU
                 float aspectRatio = (FOneAspectRatio.x / FOneAspectRatio.y);
                 WallSize.x = WallSize.y * aspectRatio;
 
+
+
             }
 
 
             //BoidType boidCohesive_cohesive = _boidsTypesData.boidTypesList[0];
 
-            
+
             //float CohesiveMaxSpeed = _boidsTypesData.boidTypesList[0].MaxSpeed;
             //Debug.Log(CohesiveMaxSpeed);
-  
+
         }
 
-        void Update()
+        protected virtual void Update()
         {
 
 
@@ -210,13 +213,13 @@ namespace BoidsSimulationOnGPU
             Width = Screen.width;
             Height = Screen.height;
             float aspectRatio = Width / Height;
-            
+
 
 
 
             // mousePos  corrected aspect from (0,0)(width, height) to (-1, -1)(1, 1)
-            mouseX = 2 * (Input.mousePosition.x / Width) - 1;
-            mouseY = 2 * (Input.mousePosition.y / Height) - 1;
+            //mouseX = 2 * (Input.mousePosition.x / Width) - 1;
+            //mouseY = 2 * (Input.mousePosition.y / Height) - 1;
 
 
             //mouse Clicked event
@@ -235,14 +238,14 @@ namespace BoidsSimulationOnGPU
                 //Debug.Log("clicked: " + clicked);
             }
             // Set Boid Type Buffer
-            
+
 
             // シミュレーション
             Simulation();
 
             //Debug.Log("deltaTime: " + Time.deltaTime);
 
-            
+
 
         }
 
@@ -262,7 +265,7 @@ namespace BoidsSimulationOnGPU
 
         #region Private Functions
         // バッファを初期化
-        void InitBuffer()
+        protected virtual void InitBuffer()
         {
             // バッファを初期化
             _boidDataBuffer = new ComputeBuffer(MaxObjectNum,
@@ -276,24 +279,24 @@ namespace BoidsSimulationOnGPU
             // Boidデータ, Forceバッファを初期化
             var forceArr = new Vector3[MaxObjectNum];
             var boidDataArr = new BoidData[MaxObjectNum];
-            
+
             for (var i = 0; i < MaxObjectNum; i++)
             {
                 forceArr[i] = Vector3.zero;
-                boidDataArr[i].Id = (uint)(i%GroupNo);
+                boidDataArr[i].Id = (uint)(i % GroupNo);
                 boidDataArr[i].Position = Random.insideUnitSphere * 1.0f;
                 boidDataArr[i].Velocity = Random.insideUnitSphere * 0.1f;
                 //boidDataArr[i].color = (boidDataArr[i].Id == 1) ? new Color(0, Random.value, Random.Range(0.7f, 1.0f)) : new Color(Random.value, 0, Random.Range(0.7f, 1.0f));
-                boidDataArr[i].color = (boidDataArr[i].Id == 1) ? new Color(0.07f, 0.63f, Random.Range(0.47f, 1.0f)) : new Color(0.98f, 0.93f,0.79f);
+                boidDataArr[i].color = (boidDataArr[i].Id == 1) ? new Color(0.07f, 0.63f, Random.Range(0.47f, 1.0f)) : new Color(0.98f, 0.93f, 0.79f);
                 //boidDataArr[i].color = new Color(0, Random.value, Random.Range(0.7f, 1.0f));
                 boidDataArr[i].initColor = boidDataArr[i].color;
-                boidDataArr[i].life = Random.Range(MaxBoidLife-10, MaxBoidLife);
+                boidDataArr[i].life = Random.Range(MaxBoidLife - 10, MaxBoidLife);
                 boidDataArr[i].intLife = boidDataArr[i].life;
                 boidDataArr[i].lifeDecMultiplier = 1.0f;
                 boidDataArr[i].interactionEnabled = 0;
                 boidDataArr[i].interactionTime = 0.0f;
 
-               
+
 
 
 
@@ -309,10 +312,10 @@ namespace BoidsSimulationOnGPU
 
             setBoidTypesBuffer();
         }
-        void setBoidTypesBuffer()
+        protected virtual void setBoidTypesBuffer()
         {
 
-            
+
 
             var boidTypesDataArr = new BoidTypesData[2];
 
@@ -330,10 +333,10 @@ namespace BoidsSimulationOnGPU
 
             _boidTypesBuffer.SetData(boidTypesDataArr);
             boidTypesDataArr = null;
-  
+
         }
         // シミュレーション
-        void Simulation()
+        protected virtual void Simulation()
         {
             ComputeShader cs = BoidsCS;
             int id = -1;
@@ -353,11 +356,10 @@ namespace BoidsSimulationOnGPU
             cs.SetFloat("_CohesionWeight", CohesionWeight);
             cs.SetFloat("_AlignmentWeight", AlignmentWeight);
             cs.SetFloat("_NoiseScale", NoiseScale);
-            cs.SetFloat( "_NoiseAspect;", NoiseAspect);
+            cs.SetFloat("_NoiseAspect;", NoiseAspect);
             cs.SetVector("_WallCenter", WallCenter);
             cs.SetVector("_WallSize", WallSize);
             cs.SetFloat("_AvoidWallWeight", AvoidWallWeight);
-            cs.SetFloat("_Time", Time.time);
             cs.SetInt("_GroupNo", GroupNo);
             cs.SetBuffer(id, "_BoidDataBufferRead", _boidDataBuffer);
             cs.SetBuffer(id, "_BoidForceBufferWrite", _boidForceBuffer);
@@ -371,29 +373,29 @@ namespace BoidsSimulationOnGPU
             cs.SetFloat("_minAlpha", MinAlpha);
             cs.SetBuffer(id, "_BoidForceBufferRead", _boidForceBuffer);
             cs.SetBuffer(id, "_BoidDataBufferWrite", _boidDataBuffer);
-            
+
             cs.Dispatch(id, threadGroupSize, 1, 1); // ComputeShaderを実行
 
 
+            //マウス用デバッグ
+            //if (Input.GetMouseButton(0))
+            //{
+            //    //Set interaction time
+            //    id = cs.FindKernel("setInteractionCS"); // カーネルIDを取得
 
-            if (Input.GetMouseButton(0))
-            {
-                //Set interaction time
-                id = cs.FindKernel("setInteractionCS"); // カーネルIDを取得
-
-                cs.SetFloat("_width", Width);
-                cs.SetFloat("_height", Height);
-                cs.SetFloat("_mouseX", mouseX);
-                cs.SetFloat("_mouseY", mouseY);
-                cs.SetFloat("_limitedAlphaLevel", limitedAlphaLevel);
-                cs.SetFloat("_effectRadius", EffectRadius);
-                cs.SetBool("_clicked", clicked);
-                cs.SetMatrix("_worldToCameraMatrix", Camera.main.worldToCameraMatrix);
-                cs.SetMatrix("_projectionMatrix", Camera.main.projectionMatrix);
-                cs.SetMatrix("_projectionMatrix", Camera.main.projectionMatrix);
-                cs.SetBuffer(id, "_BoidDataBufferWrite", _boidDataBuffer);
-                cs.Dispatch(id, threadGroupSize, 1, 1); // ComputeShaderを実行
-            }
+            //    cs.SetFloat("_width", Width);
+            //    cs.SetFloat("_height", Height);
+            //    cs.SetFloat("_mouseX", mouseX);
+            //    cs.SetFloat("_mouseY", mouseY);
+            //    cs.SetFloat("_limitedAlphaLevel", limitedAlphaLevel);
+            //    cs.SetFloat("_effectRadius", EffectRadius);
+            //    cs.SetBool("_clicked", clicked);
+            //    cs.SetMatrix("_worldToCameraMatrix", Camera.main.worldToCameraMatrix);
+            //    cs.SetMatrix("_projectionMatrix", Camera.main.projectionMatrix);
+            //    cs.SetMatrix("_projectionMatrix", Camera.main.projectionMatrix);
+            //    cs.SetBuffer(id, "_BoidDataBufferWrite", _boidDataBuffer);
+            //    cs.Dispatch(id, threadGroupSize, 1, 1); // ComputeShaderを実行
+            //}
 
 
 
@@ -415,6 +417,78 @@ namespace BoidsSimulationOnGPU
 
         }
 
+
+        #region OSC detector
+        //////////////////////////////////////////////////////////////
+
+        public void OnReceived(Osc.OscPort.Capsule c)
+        {
+            if (c.message.path == SensorOscAddress)
+            {
+                var message = c.message.data;
+                if (message != null)
+                {
+                    string areaId;
+                    int tracking_id;
+                    float x;
+                    float y;
+                    areaId = message[0].ToString();
+                    bool bTracking_id = int.TryParse(message[1].ToString(), out tracking_id);
+                    bool bX = float.TryParse(message[2].ToString(), out x);
+                    bool bY = float.TryParse(message[3].ToString(), out y);
+
+                    Debug.Log(areaId + " " + x + " " + y);
+
+                    if (bTracking_id && bX && bY)
+                    {
+                        ConvertSensorDate(x, y);
+                    }
+
+                }
+            }
+        }
+
+        // Convert 00 - 11 sensor coord to -1-1 11 coord
+        public void ConvertSensorDate(float x, float y)
+        {
+            Shader.SetGlobalFloat("SpoutX", x);
+            Shader.SetGlobalFloat("SpoutY", y);
+            Vector2 output = new Vector2(x, y) * 2.0f - new Vector2(1.0f, 1.0f);
+            
+            sendSensorData(output);
+
+            
+        }
+        public void sendSensorData(Vector2 input)
+        {
+            ComputeShader cs = BoidsCS;
+            int id = -1;
+
+            id = cs.FindKernel("setInteractionCS"); // カーネルIDを取得
+            int threadGroupSize = Mathf.CeilToInt(MaxObjectNum / SIMULATION_BLOCK_SIZE);
+
+            cs.SetFloat("_mouseX", input.x);
+            cs.SetFloat("_mouseY", input.y);
+
+            cs.SetFloat("_width", Width);
+            cs.SetFloat("_height", Height);
+            cs.SetFloat("_limitedAlphaLevel", 1.0f);
+            cs.SetFloat("_effectRadius", EffectRadius);
+            cs.SetBool("_clicked", clicked);
+            cs.SetMatrix("_worldToCameraMatrix", Camera.main.worldToCameraMatrix);
+            cs.SetMatrix("_projectionMatrix", Camera.main.projectionMatrix);
+            cs.SetMatrix("_projectionMatrix", Camera.main.projectionMatrix);
+            cs.SetBuffer(id, "_BoidDataBufferWrite", _boidDataBuffer);
+            cs.Dispatch(id, threadGroupSize, 1, 1); // ComputeShaderを実行
+
+
+            
+        }
+
+        
+
+        //////////////////////////////////////////////////////////////
+        #endregion
         // バッファを解放
 
         void ReleaseBuffer()

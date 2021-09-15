@@ -43,6 +43,7 @@ namespace BoidsSimulationOnGPU
         // 最大オブジェクト数
         [Range(256, 32768)]
         public int MaxObjectNum = 16384;
+        public int emitCount    = 10;
 
         // 結合を適用する他の個体との半径
         public float CohesionNeighborhoodRadius = 2.0f;
@@ -92,6 +93,10 @@ namespace BoidsSimulationOnGPU
         private bool clicked;
         private float alphaLevel;
         private float limitedAlphaLevel;
+
+        private ComputeBuffer pooledParticleBuffer;
+        private ComputeBuffer particleCountBuffer;
+        private uint[] particleCount;
 
         //Inreaction Time
         [Range(0.1f, 10.0f)]
@@ -277,38 +282,49 @@ namespace BoidsSimulationOnGPU
 
 
             // Boidデータ, Forceバッファを初期化
-            var forceArr = new Vector3[MaxObjectNum];
-            var boidDataArr = new BoidData[MaxObjectNum];
+            //var forceArr = new Vector3[MaxObjectNum];
+            //var boidDataArr = new BoidData[MaxObjectNum];
 
-            for (var i = 0; i < MaxObjectNum; i++)
-            {
-                forceArr[i] = Vector3.zero;
-                boidDataArr[i].Id = (uint)(i % GroupNo);
-                boidDataArr[i].Position = Random.insideUnitSphere * 1.0f;
-                boidDataArr[i].Velocity = Random.insideUnitSphere * 0.1f;
-                //boidDataArr[i].color = (boidDataArr[i].Id == 1) ? new Color(0, Random.value, Random.Range(0.7f, 1.0f)) : new Color(Random.value, 0, Random.Range(0.7f, 1.0f));
-                boidDataArr[i].color = (boidDataArr[i].Id == 1) ? new Color(0.07f, 0.63f, Random.Range(0.47f, 1.0f)) : new Color(0.98f, 0.93f, 0.79f);
-                //boidDataArr[i].color = new Color(0, Random.value, Random.Range(0.7f, 1.0f));
-                boidDataArr[i].initColor = boidDataArr[i].color;
-                boidDataArr[i].life = Random.Range(MaxBoidLife - 10, MaxBoidLife);
-                boidDataArr[i].intLife = boidDataArr[i].life;
-                boidDataArr[i].lifeDecMultiplier = 1.0f;
-                boidDataArr[i].interactionEnabled = 0;
-                boidDataArr[i].interactionTime = 0.0f;
-
-
+            //for (var i = 0; i < MaxObjectNum; i++)
+            //{
+            //    forceArr[i] = Vector3.zero;
+            //    boidDataArr[i].Id = (uint)(i % GroupNo);
+            //    boidDataArr[i].Position = Random.insideUnitSphere * 1.0f;
+            //    boidDataArr[i].Velocity = Random.insideUnitSphere * 0.1f;
+            //    //boidDataArr[i].color = (boidDataArr[i].Id == 1) ? new Color(0, Random.value, Random.Range(0.7f, 1.0f)) : new Color(Random.value, 0, Random.Range(0.7f, 1.0f));
+            //    boidDataArr[i].color = (boidDataArr[i].Id == 1) ? new Color(0.07f, 0.63f, Random.Range(0.47f, 1.0f)) : new Color(0.98f, 0.93f, 0.79f);
+            //    //boidDataArr[i].color = new Color(0, Random.value, Random.Range(0.7f, 1.0f));
+            //    boidDataArr[i].initColor = boidDataArr[i].color;
+            //    boidDataArr[i].life = Random.Range(MaxBoidLife - 10, MaxBoidLife);
+            //    boidDataArr[i].intLife = boidDataArr[i].life;
+            //    boidDataArr[i].lifeDecMultiplier = 1.0f;
+            //    boidDataArr[i].interactionEnabled = 0;
+            //    boidDataArr[i].interactionTime = 0.0f;
 
 
 
-                // https://docs.unity3d.com/ja/2018.4/ScriptReference/Random-insideUnitSphere.html
-            }
+
+
+            //    // https://docs.unity3d.com/ja/2018.4/ScriptReference/Random-insideUnitSphere.html
+            //}
 
 
 
-            _boidForceBuffer.SetData(forceArr);
-            _boidDataBuffer.SetData(boidDataArr);
-            forceArr = null;
-            boidDataArr = null;
+            //_boidForceBuffer.SetData(forceArr);
+            //_boidDataBuffer.SetData(boidDataArr);
+            //forceArr = null;
+            //boidDataArr = null;
+
+            pooledParticleBuffer = new ComputeBuffer(MaxObjectNum, Marshal.SizeOf(typeof(uint)), ComputeBufferType.Append);
+            pooledParticleBuffer.SetCounterValue(0);
+
+            particleCountBuffer = new ComputeBuffer(1, Marshal.SizeOf(typeof(uint)), ComputeBufferType.IndirectArguments);
+            particleCount = new uint[] { 0 };
+            particleCountBuffer.SetData(particleCount);
+
+            var id = BoidsCS.FindKernel("Initialize"); // カーネルIDを取得
+            BoidsCS.SetBuffer(id, "_DeadParticleBuffer", pooledParticleBuffer);
+            BoidsCS.Dispatch(id, MaxObjectNum / SIMULATION_BLOCK_SIZE, 1, 1);
 
             setBoidTypesBuffer();
         }
@@ -370,6 +386,7 @@ namespace BoidsSimulationOnGPU
             // 操舵力から、速度と位置を計算
             id = cs.FindKernel("IntegrateCS"); // カーネルIDを取得
             cs.SetFloat("_DeltaTime", Time.deltaTime);
+            cs.SetFloat("_Time", Time.time);
             cs.SetFloat("_minAlpha", MinAlpha);
             cs.SetBuffer(id, "_BoidForceBufferRead", _boidForceBuffer);
             cs.SetBuffer(id, "_BoidDataBufferWrite", _boidDataBuffer);
@@ -378,8 +395,9 @@ namespace BoidsSimulationOnGPU
 
 
             //マウス用デバッグ
-            //if (Input.GetMouseButton(0))
-            //{
+            if (Input.GetMouseButton(0))
+            {
+                Emit(cs);
             //    //Set interaction time
             //    id = cs.FindKernel("setInteractionCS"); // カーネルIDを取得
 
@@ -395,7 +413,7 @@ namespace BoidsSimulationOnGPU
             //    cs.SetMatrix("_projectionMatrix", Camera.main.projectionMatrix);
             //    cs.SetBuffer(id, "_BoidDataBufferWrite", _boidDataBuffer);
             //    cs.Dispatch(id, threadGroupSize, 1, 1); // ComputeShaderを実行
-            //}
+            }
 
 
 
@@ -413,8 +431,43 @@ namespace BoidsSimulationOnGPU
             id = cs.FindKernel("trackLifeCS"); // カーネルIDを取得
             cs.SetBuffer(id, "_BoidDataBufferWrite", _boidDataBuffer);
             cs.SetBuffer(id, "_BoidForceBufferWrite", _boidForceBuffer);
+            cs.SetBuffer(id, "_DeadParticleBuffer", pooledParticleBuffer);
             cs.Dispatch(id, threadGroupSize, 1, 1); // ComputeShaderを実行
 
+        }
+
+        Matrix4x4 GetViewProjectionMatrix()
+        {
+            var camera = Camera.main;
+            var view = camera.worldToCameraMatrix;
+            var proj = GL.GetGPUProjectionMatrix(camera.projectionMatrix, false);
+            var vp = proj * view;
+            return proj * view;
+        }
+
+        void Emit(ComputeShader cs)
+        {
+            var id = cs.FindKernel("Emit"); // カーネルIDを取得
+
+            ComputeBuffer.CopyCount(pooledParticleBuffer, particleCountBuffer, 0);
+
+            particleCountBuffer.GetData(particleCount);
+
+            if (particleCount[0] < emitCount)
+            {
+                return;
+            }
+
+            var mousePos = Camera.main.ScreenToViewportPoint(Input.mousePosition);
+            cs.SetFloat("_mouseX", mouseX);
+            cs.SetFloat("_mouseY", mouseY);
+            cs.SetFloat("_ParticleEmitDuration", 3);
+            cs.SetFloat("_MaxBoidLife", MaxBoidLife);
+            cs.SetVector("_WorldPos", GetViewProjectionMatrix().inverse * mousePos);
+            cs.SetBuffer(id, "_BoidDataBufferWrite", _boidDataBuffer);
+            cs.SetBuffer(id, "_PooledParticleBuffer", pooledParticleBuffer);
+
+            cs.Dispatch(id, emitCount / 8, 1, 1);
         }
 
 
@@ -510,6 +563,18 @@ namespace BoidsSimulationOnGPU
                 _boidTypesBuffer.Release();
                 _boidTypesBuffer = null;
             }
+
+            if (pooledParticleBuffer != null) 
+            { 
+                pooledParticleBuffer.Release();
+                pooledParticleBuffer = null;
+            }
+
+            if (particleCountBuffer != null) 
+            {
+                particleCountBuffer.Release();
+                particleCountBuffer = null;
+            }
         }
 
 
@@ -518,6 +583,13 @@ namespace BoidsSimulationOnGPU
         {
             float limitedAlphaLevel = Mathf.Clamp01(alphaLevel);
             return limitedAlphaLevel;
+        }
+
+        void OnGUI()
+        {
+            ComputeBuffer.CopyCount(pooledParticleBuffer, particleCountBuffer, 0);
+            particleCountBuffer.GetData(particleCount);
+            GUILayout.Label("Pooled(Dead) Particles : " + particleCount[0]);
         }
         #endregion
     } // class

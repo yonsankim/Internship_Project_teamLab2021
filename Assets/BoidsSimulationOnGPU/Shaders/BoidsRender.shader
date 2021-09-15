@@ -126,6 +126,8 @@
 				// Scaleと位置を適用
 				float4x4 object2world = (float4x4)0;
 
+				if(boidData.life < 0)
+					scl = 0;
 				// Z位置とInteractionEnabledでスケールを操作
 				scl = scl * 0.45 * (-pos.z + _BoxDepth / 2.0) / _BoxDepth + boidData.interactionEnabled * 0.01;
 				boidData.life = boidData.life / boidData.intLife;

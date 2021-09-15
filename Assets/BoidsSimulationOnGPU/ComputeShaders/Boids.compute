@@ -1,4 +1,6 @@
 ﻿// カーネル関数を指定
+#pragma kernel Initialize
+#pragma kernel Emit
 #pragma kernel ForceCS				// 操舵力を計算
 #pragma kernel IntegrateCS			// 速度, 位置を計算
 #pragma kernel setInteractionCS		// particleにエフェクト適用か計算、正ならインタラクションタイム付与
@@ -54,9 +56,13 @@ RWStructuredBuffer<float3>   _BoidForceBufferWrite;
 // ScriptableObjectデータのバッファ（読み取り用）
 StructuredBuffer<BoidTypesData> _BoidTypesBufferRead;
 
+ConsumeStructuredBuffer<uint> _PooledParticleBuffer;
+AppendStructuredBuffer<uint>  _DeadParticleBuffer;
+
 int _MaxBoidObjectNum; // Boidオブジェクト数
 
 float _DeltaTime;      // 前フレームから経過した時間
+float _Time;
 
 float _SeparateNeighborhoodRadius;  // 分離を適用する他の個体との距離
 float _AlignmentNeighborhoodRadius; // 整列を適用する他の個体との距離
@@ -84,6 +90,7 @@ float _height; //縦幅
 
 float _mouseX; //マウスx座標
 float _mouseY; //マウスy座標
+float3 _WorldPos;
 float _interactionTime; //インタラクション時間
 
 bool  _clicked; //mouse onCick event
@@ -109,6 +116,8 @@ float perlinNoise3D(float3 seeds);
 
 float _NoiseScale;
 float _NoiseAspect;
+
+float _MaxBoidLife;
 
 
 // ベクトルの大きさを制限する
@@ -137,6 +146,33 @@ float3 avoidWall(float3 position)
 	acc.z = (position.z > wc.z + ws.z * 0.5) ? acc.z - 1.0 * abs(tan(_DeltaTime)) : acc.z;
 
 	return acc;
+}
+
+
+[numthreads(SIMULATION_BLOCK_SIZE, 1, 1)]
+void Initialize(uint3 id : SV_DispatchThreadID)
+{
+    _DeadParticleBuffer.Append(id.x);
+}
+
+[numthreads(8, 1, 1)]
+void Emit()
+{
+    uint id = _PooledParticleBuffer.Consume();
+
+    BoidData p = _BoidDataBufferWrite[id];
+
+    p.position = _WorldPos.xyz * 2 - float3(_WallSize.x / 2, _WallSize.y / 2, 0);
+    p.velocity = normalize(random3(id) - 0.5);
+    p.life = (_MaxBoidLife - 10) + 10 * random(id + fmod(_Time * 30.0, 65535));
+	p.initColor = float4(0, random(id + fmod(_Time * 30.0, 65535)), 0.7 + 0.3 * random(id + fmod(_Time, 65535)), 1);
+	p.color = p.initColor;
+	p.intLife = p.life;
+	p.lifeDecMultiplier = 1;
+	p.interactionEnabled = 0;
+	p.interactionTime = 0;
+
+	_BoidDataBufferWrite[id] = p;
 }
 
 // Screen Conversion of point coordinates
@@ -343,26 +379,29 @@ void IntegrateCS
 	const unsigned int P_ID = DTid.x;          // インデックスを取得
 
 	BoidData b = _BoidDataBufferWrite[P_ID];   // 現在のBoidデータを読み込む
-	float3 force = _BoidForceBufferRead[P_ID]; // 操舵力を読み込む
+	if(b.life > 0)
+	{
+		float3 force = _BoidForceBufferRead[P_ID]; // 操舵力を読み込む
 
-	// 壁に近づいたら反発する力を与える
-	force += avoidWall(b.position) * _AvoidWallWeight;
+		// 壁に近づいたら反発する力を与える
+		force += avoidWall(b.position) * _AvoidWallWeight;
 
-	b.velocity += force * _DeltaTime;          // 操舵力を速度に適用
-	b.velocity = limit(b.velocity, _MaxSpeed); // 速度を制限
-	b.position += b.velocity * _DeltaTime;     // 位置を更新
-
-
-	//　BoidのAlpha値を速度で調整する
-
-	float velMag = sqrt(dot(b.velocity, b.velocity)); // Velocity Magnitude
-	float adjAlpha = clamp(velMag / _MaxSpeed, _minAlpha, 1);
-	b.color.a = adjAlpha;
+		b.velocity += force * _DeltaTime;          // 操舵力を速度に適用
+		b.velocity = limit(b.velocity, _MaxSpeed); // 速度を制限
+		b.position += b.velocity * _DeltaTime;     // 位置を更新
 
 
+		//　BoidのAlpha値を速度で調整する
+
+		float velMag = sqrt(dot(b.velocity, b.velocity)); // Velocity Magnitude
+		float adjAlpha = clamp(velMag / _MaxSpeed, _minAlpha, 1);
+		b.color.a = adjAlpha;
 
 
-	_BoidDataBufferWrite[P_ID] = b;            // 計算結果を書き
+
+
+		_BoidDataBufferWrite[P_ID] = b;            // 計算結果を書き
+	}
 }
 
 
@@ -510,25 +549,21 @@ void trackLifeCS
 	const unsigned int P_ID = DTid.x;// インデックスを取得
 
 	BoidData b = _BoidDataBufferWrite[P_ID];
-	// Update Life Time and apply scale based on Life
-	b.life -= (_DeltaTime * b.lifeDecMultiplier);
-	b.life = (b.life < 0) ? 0 : b.life;
-	if (b.life == 0)
+	if(b.life > 0)
 	{
-		b.position = float3(0, 0, _WallSize.z / 2);
-		b.velocity = b.velocity / 20.0;
-		b.color = b.initColor;
-		b.life = b.intLife;
-		b.lifeDecMultiplier = 1.0;
-
+		// Update Life Time and apply scale based on Life
+		b.life -= (_DeltaTime * b.lifeDecMultiplier);
+		if (b.life < 0)
+		{
+			b.position = float3(0, 0, _WallSize.z / 2);
+			b.velocity = b.velocity / 20.0;
+			b.color = b.initColor;
+			b.lifeDecMultiplier = 1.0;
+			_DeadParticleBuffer.Append(P_ID);
+		}
+		_BoidDataBufferWrite[P_ID] = b;
 	}
-
-
-	float3 force = _BoidForceBufferRead[P_ID]; // 操舵力を読み込む
-
-
-	_BoidDataBufferWrite[P_ID] = b;
-
+	
 }
 
 

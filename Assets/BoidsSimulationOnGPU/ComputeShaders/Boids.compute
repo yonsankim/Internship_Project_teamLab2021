@@ -116,7 +116,7 @@ float perlinNoise3D(float3 seeds);
 
 float _NoiseScale;
 float _NoiseAspect;
-
+float3 _ParticleColor;
 float _MaxBoidLife;
 
 
@@ -162,10 +162,11 @@ void Emit()
 
     BoidData p = _BoidDataBufferWrite[id];
 
+	p.id = id % 2;
     p.position = _WorldPos.xyz * 2 - float3(_WallSize.x / 2, _WallSize.y / 2, 0);
     p.velocity = normalize(random3(id) - 0.5);
     p.life = (_MaxBoidLife - 10) + 10 * random(id + fmod(_Time * 30.0, 65535));
-	p.initColor = float4(0, random(id + fmod(_Time * 30.0, 65535)), 0.7 + 0.3 * random(id + fmod(_Time, 65535)), 1);
+	p.initColor = (p.id == 0) ? float4(0, random(id + fmod(_Time * 30.0, 65535)), 0.7 + 0.3 * random(id + fmod(_Time, 65535)), 1) : float4(_ParticleColor, 1.0);
 	p.color = p.initColor;
 	p.intLife = p.life;
 	p.lifeDecMultiplier = 1;

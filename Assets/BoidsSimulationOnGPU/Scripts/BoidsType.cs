@@ -47,6 +47,10 @@ public class BoidType
         {
             return cohesionNeighbourhoodRadius;
         }
+        set
+        {
+            cohesionNeighbourhoodRadius = value;
+        }
     }
 
     public float AlignmentNeighbourhoodRadius
@@ -54,6 +58,10 @@ public class BoidType
         get
         {
             return alignmentNeighbourhoodRadius;
+        }
+        set
+        {
+            alignmentNeighbourhoodRadius = value;
         }
     }
 
@@ -63,6 +71,10 @@ public class BoidType
         {
             return separateNeighbourhoodRadius;
         }
+        set
+        {
+            separateNeighbourhoodRadius = value;
+        }
     }
 
     public float MaxSpeed
@@ -71,6 +83,11 @@ public class BoidType
         {
             return maxSpeed;
         }
+        set
+        {
+            maxSpeed = value;
+        }
+
     }
 
     public float MaxSteerForce
@@ -78,6 +95,10 @@ public class BoidType
         get
         {
             return maxSteerForce;
+        }
+        set
+        {
+            maxSteerForce = value;
         }
     }
 
@@ -88,6 +109,10 @@ public class BoidType
         {
             return cohesionWeight;
         }
+        set
+        {
+            cohesionWeight = value;
+        }
     }
 
     public float AlignmentWeight
@@ -96,6 +121,10 @@ public class BoidType
         {
             return alignmentWeight;
         }
+        set
+        {
+            alignmentWeight = value;
+        }
     }
 
     public float SeparateWeight
@@ -103,6 +132,10 @@ public class BoidType
         get
         {
             return separateWeight;
+        }
+        set
+        {
+            separateWeight = value;
         }
     }
 

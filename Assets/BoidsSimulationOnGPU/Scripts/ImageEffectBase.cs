@@ -8,7 +8,10 @@ public class ImageEffectBase : MonoBehaviour
     public Material material;
     public PingPongRenderTexture rts;
     public RenderTexture preTexture;
-    public float ratio = 1f;
+    public float PrevCurBelndRatio = 1f;
+    public float BaseNewBaseBlendRatio = 0.3f;
+    public float Debug = 1.0f;
+
 
     protected virtual void Start()
     {
@@ -18,7 +21,9 @@ public class ImageEffectBase : MonoBehaviour
 
     protected virtual void OnRenderImage(RenderTexture source, RenderTexture destination)
     {
-        material.SetFloat("_Ratio", ratio);
+        material.SetFloat("_Ratio", PrevCurBelndRatio);
+        material.SetFloat("_BaseNewBaseBlendRatio", BaseNewBaseBlendRatio);
+        material.SetFloat("_Debug", Debug);
         material.SetTexture("_Prev", rts.Read);
         Graphics.Blit(source, rts.Write, material);
         Graphics.Blit(rts.Write, destination, material);

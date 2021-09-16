@@ -115,7 +115,7 @@ namespace BoidsSimulationOnGPU
 
 
         public int GroupNo;
-
+        public Color ParticleColor = new Color(0.98f, 0.93f, 0.79f);
 
         //Camera OrthographicSize;
         private float OrthographicSize;
@@ -397,7 +397,7 @@ namespace BoidsSimulationOnGPU
             //マウス用デバッグ
             if (Input.GetMouseButton(0))
             {
-                Emit(cs);
+                Emit(Input.mousePosition.x, Input.mousePosition.y);
             //    //Set interaction time
             //    id = cs.FindKernel("setInteractionCS"); // カーネルIDを取得
 
@@ -445,8 +445,10 @@ namespace BoidsSimulationOnGPU
             return proj * view;
         }
 
-        void Emit(ComputeShader cs)
+        void Emit(float x, float y)
         {
+            ComputeShader cs =BoidsCS;
+
             var id = cs.FindKernel("Emit"); // カーネルIDを取得
 
             ComputeBuffer.CopyCount(pooledParticleBuffer, particleCountBuffer, 0);
@@ -458,11 +460,13 @@ namespace BoidsSimulationOnGPU
                 return;
             }
 
-            var mousePos = Camera.main.ScreenToViewportPoint(Input.mousePosition);
-            cs.SetFloat("_mouseX", mouseX);
-            cs.SetFloat("_mouseY", mouseY);
+
+
+            var mousePos = Camera.main.ScreenToViewportPoint(new Vector3(x, y, 0));
+
             cs.SetFloat("_ParticleEmitDuration", 3);
             cs.SetFloat("_MaxBoidLife", MaxBoidLife);
+            cs.SetVector("_ParticleColor", ParticleColor);
             cs.SetVector("_WorldPos", GetViewProjectionMatrix().inverse * mousePos);
             cs.SetBuffer(id, "_BoidDataBufferWrite", _boidDataBuffer);
             cs.SetBuffer(id, "_PooledParticleBuffer", pooledParticleBuffer);
@@ -538,7 +542,37 @@ namespace BoidsSimulationOnGPU
             
         }
 
-        
+
+
+        ///////////////////////////////////////////////////////////////
+        public void OnReceivedEmit(Osc.OscPort.Capsule c)
+        {
+            if (c.message.path == SensorOscAddress)
+            {
+                var message = c.message.data;
+                if (message != null)
+                {
+                    string areaId;
+                    int tracking_id;
+                    float x;
+                    float y;
+                    areaId = message[0].ToString();
+                    bool bTracking_id = int.TryParse(message[1].ToString(), out tracking_id);
+                    bool bX = float.TryParse(message[2].ToString(), out x);
+                    bool bY = float.TryParse(message[3].ToString(), out y);
+
+                    Debug.Log(areaId + " " + x + " " + y);
+
+                    if (bTracking_id && bX && bY)
+                    {
+                        Emit(x*6690, y*2160);
+                    }
+
+                }
+            }
+        }
+
+
 
         //////////////////////////////////////////////////////////////
         #endregion

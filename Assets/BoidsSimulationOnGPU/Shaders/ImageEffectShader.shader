@@ -31,6 +31,8 @@ Shader "Hidden/ImageEffectShader"
                 float4 _MainTex_ST;
                 sampler2D _Prev;
                 float _Ratio;
+                float _BaseNewBaseBlendRatio;
+                float _Debug;
 
 
                 
@@ -214,8 +216,8 @@ Shader "Hidden/ImageEffectShader"
 
                     ////////////////OPTION 2
                     float4 blendedCurPrev = baseColor * _Ratio + prevColor * (1 - _Ratio);
-                    baseColor.rgb = BlendColor(baseColor.rgb, blendedCurPrev);
-                    return float4(BlendLinearLight(baseColor.rgb, blendColor)+debugCircle, baseColor.a);
+                    float3 newBaseColor = BlendColor(baseColor.rgb, blendedCurPrev);
+                    return lerp(baseColor, float4(BlendLinearLight(newBaseColor, blendColor)+ debugCircle*_Debug, baseColor.a), _BaseNewBaseBlendRatio);
 
                     // BlendScreen
                 }

@@ -4,4 +4,8 @@
 EditorBuildSettings:
   m_ObjectHideFlags: 0
   serializedVersion: 2
-  m_Scenes: []
+  m_Scenes:
+  - enabled: 1
+    path: Assets/BoidsSimulationOnGPU/BoidsSimulationOnGPU.unity
+    guid: 90cd09b78ebf02a41b70bb555bded046
+  m_configObjects: {}

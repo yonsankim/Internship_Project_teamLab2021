@@ -163,7 +163,7 @@ void Emit()
     BoidData p = _BoidDataBufferWrite[id];
 
 	p.id = id % 2;
-    p.position = _WorldPos.xyz * 2 - float3(_WallSize.x / 2, _WallSize.y / 2, 0);
+    p.position = _WorldPos.xyz;
     p.velocity = normalize(random3(id) - 0.5);
     p.life = (_MaxBoidLife - 10) + 10 * random(id + fmod(_Time * 30.0, 65535));
 	p.initColor = (p.id == 0) ? float4(0, random(id + fmod(_Time * 30.0, 65535)), 0.7 + 0.3 * random(id + fmod(_Time, 65535)), 1) : float4(_ParticleColor, 1.0);
@@ -181,7 +181,7 @@ float4 positionScreenConversion(float3 bPosition)
 {
 
 	aspectRatio = _width / _height;
-	matrix _matrix = mul(_projectionMatrix, _worldToCameraMatrix);   // Viewport matrix
+	matrix _matrix = mul(_projectionMatrix, _worldToCameraMatrix);			// Viewport matrix
 	float4 screenPos = mul(_matrix, float4(bPosition, 1));					// Viewport matrix X particle matrix
 	screenPos = (screenPos / screenPos.w);
 	screenPos.x = screenPos.x * aspectRatio;
@@ -273,17 +273,13 @@ void ForceCS
 		GroupMemoryBarrierWithGroupSync();
 
 		// Apply PERLIN NOISE
-		//float theta = noise2D(P_position.xy);
-
 		float theta = perlinNoise3D(float3(P_position.xyz * _squiggliness * _DeltaTime * 10)) * 7;
 		float x = cos(theta * 2 * PI);
 		float y = sin(theta * 2 * PI);
 
-		P_position += sin(x * _DeltaTime) * x;
-		P_position += cos(y * _DeltaTime) * y;
+		P_position.x += sin(x * _DeltaTime) * x;
+		P_position.y += cos(y * _DeltaTime) * y;
 
-		//P_position += x;
-		//P_position += y;
 
 
 
@@ -473,6 +469,7 @@ void applyInteractionCS
 		// 選択されたときに逆向きの力を返す
 		float aspectRatio = _width / _height;
 
+		// 座標変換
 		matrix _matrix = mul(_projectionMatrix, _worldToCameraMatrix);			// Viewport matrix
 		float4 screenPos = mul(_matrix, float4(b.position, 1));					// Viewport matrix X particle matrix
 		float2 mousePos = float2(_mouseX, _mouseY);
@@ -506,21 +503,12 @@ void applyInteractionCS
 
 
 		// COLOR
-		//b.color = lerp(float4(1, 1, 0, 1), b.initColor, ratio);
 
 		float4 coln = b.color - b.initColor;
 		float rgbSum = coln.r + coln.g + coln.b;
-		//if (rgbSum < 0.5) {
-		//	
-		//}
+
 
 		b.color = lerp(b.initColor, float4(0.96, 0.85, 0.21, ratio), sin(PI * (1 - ratio)));
-		//if (b.id == 0) {
-		//	b.color = lerp(b.initColor, float4(1, 1, 0, ratio), sin(PI * (1 - ratio)));
-		//}
-		//if (b.id == 1) {
-		//	b.color = lerp(b.initColor, float4(1, 0, 0, ratio), sin(PI * (1 - ratio)));
-		//}
 
 		b.interactionEnabled = round(ratio);
 
@@ -532,7 +520,6 @@ void applyInteractionCS
 
 
 	}
-	//col = lerp(col, float4(1, 0.5, 0, col.a), _limitedAlphaLevel);
 
 	_BoidDataBufferWrite[P_ID] = b;
 
@@ -708,36 +695,3 @@ float perlinNoise3D(float3 seeds)
 		v001v101v011v111, p.z) * 0.5 + 0.5;
 }
 /////////////////////////////////
-
-
-//float2 hash(in float2 x)
-//{
-//	const float2 k = float2(0.3183099, 0.3678794);
-//	x = x * k + k.yx;
-//	return -1.0 + 2.0 * frac(16.0 * k * frac(x.x * x.y * (x.x + x.y)));
-//}
-//
-//float3 noised(in float2 p)
-//{
-//	float2 i = floor(p);
-//	float2 f = frac(p);
-//
-//	//quintic interpolation
-//	float2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
-//	float2 du = 30.0 * f * f * (f * (f - 2.0) + 1.0);
-//
-//	float2 ga = hash(i + float2(0.0, 0.0));
-//	float2 gb = hash(i + float2(1.0, 0.0));
-//	float2 gc = hash(i + float2(0.0, 1.0));
-//	float2 gd = hash(i + float2(1.0, 1.0));
-//
-//
-//	float va = dot(ga, f - float2(0.0, 0.0));
-//	float vb = dot(gb, f - float2(1.0, 0.0));
-//	float vc = dot(gc, f - float2(0.0, 1.0));
-//	float vd = dot(gd, f - float2(1.0, 1.0));
-//
-//	return float3(va + u.x * (vb - va) + u.y * (vc - va) + u.x * u.y * (va - vb - vc + vd),
-//		ga + u.x * (gb - ga) + u.y * (gc - ga) + u.x * u.y * (ga - gb - gc + gd) +
-//		du * (u.yx * (va - vb - vc + vd) + float2(vb, vc) - va));
-//}

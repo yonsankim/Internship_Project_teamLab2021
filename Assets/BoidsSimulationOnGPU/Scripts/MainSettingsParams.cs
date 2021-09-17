@@ -69,6 +69,13 @@ namespace BoidsSimulationOnGPU{
 
 
             });
+            _imageEffectBaseFolds.Add("ImageEffectBaseSpout", () =>
+            {
+
+                debug1.OnGUISlider(0, 1);
+
+
+            });
 
 
 
@@ -104,12 +111,16 @@ namespace BoidsSimulationOnGPU{
         [SerializeField]
         ImageEffectBase _imageEffectBase;
 
+        [SerializeField]
+        ImageEffectBase _imageEffectBaseSpout;
+
 
         #region Folds
         GUIUtil.Folds _boidsGPUFolds = new GUIUtil.Folds();
         GUIUtil.Folds _boidsTypeFolds = new GUIUtil.Folds();
         GUIUtil.Folds _boidsRendererFolds = new GUIUtil.Folds();
         GUIUtil.Folds _imageEffectBaseFolds = new GUIUtil.Folds();
+        GUIUtil.Folds _imageEffectBaseSpoutFolds = new GUIUtil.Folds();
 
         #endregion
 
@@ -160,6 +171,10 @@ namespace BoidsSimulationOnGPU{
         public PrefsFloat prevCurBelndRatio = new PrefsFloat("PrevCurBelndRatio", 1.0f);
         public PrefsFloat baseNewBaseBlendRatio = new PrefsFloat("BaseNewBaseBlendRatio", 0.3f);
         public PrefsFloat debug = new PrefsFloat("Debug", 1.0f);
+        
+        [Header("ImageEffectSpoud")]
+
+        public PrefsFloat debug1 = new PrefsFloat("Debug1", 1.0f);
 
 
 
@@ -188,6 +203,10 @@ namespace BoidsSimulationOnGPU{
             // ImageEffectBase
             // ------------------------------------------------------------
             _imageEffectBaseFolds.OnGUI();
+            // ------------------------------------------------------------
+            // ImageEffectBaseSpout
+            // ------------------------------------------------------------
+            _imageEffectBaseSpoutFolds.OnGUI();
 
             if (GUILayout.Button("Save"))
                 Prefs.Save(FileName);
@@ -251,6 +270,13 @@ namespace BoidsSimulationOnGPU{
                 _imageEffectBase.PrevCurBelndRatio = prevCurBelndRatio;
                 _imageEffectBase.BaseNewBaseBlendRatio = baseNewBaseBlendRatio;
                 _imageEffectBase.Debug = debug;
+
+            }
+
+            if (_imageEffectBaseSpout != null)
+            {
+
+                _imageEffectBaseSpout.Debug = debug;
 
             }
         }

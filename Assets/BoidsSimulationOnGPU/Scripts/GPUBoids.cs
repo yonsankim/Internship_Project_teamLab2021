@@ -124,7 +124,7 @@ namespace BoidsSimulationOnGPU
         public float NoiseScale;
         public float NoiseAspect;
 
-
+        public Camera SpoutCamera;
         // OSCs
         
         public string SensorOscAddress = "/point";
@@ -206,7 +206,7 @@ namespace BoidsSimulationOnGPU
 
             //float CohesiveMaxSpeed = _boidsTypesData.boidTypesList[0].MaxSpeed;
             //Debug.Log(CohesiveMaxSpeed);
-
+            Application.targetFrameRate = 60;
         }
 
         protected virtual void Update()
@@ -397,7 +397,9 @@ namespace BoidsSimulationOnGPU
             //マウス用デバッグ
             if (Input.GetMouseButton(0))
             {
-                Emit(Input.mousePosition.x, Input.mousePosition.y);
+
+                
+                Emit(Input.mousePosition.x/1920, Input.mousePosition.y/620);
             //    //Set interaction time
             //    id = cs.FindKernel("setInteractionCS"); // カーネルIDを取得
 
@@ -460,9 +462,9 @@ namespace BoidsSimulationOnGPU
                 return;
             }
 
+            Vector2 output = new Vector2(x, y) * 2.0f - new Vector2(1.0f, 1.0f);
 
-
-            var mousePos = Camera.main.ScreenToViewportPoint(new Vector3(x, y, 0));
+            var mousePos = new Vector3(output.x, output.y, 0);// SpoutCamera.ScreenToViewportPoint(new Vector3(x, y, 0));
 
             cs.SetFloat("_ParticleEmitDuration", 3);
             cs.SetFloat("_MaxBoidLife", MaxBoidLife);
@@ -494,7 +496,7 @@ namespace BoidsSimulationOnGPU
                     bool bX = float.TryParse(message[2].ToString(), out x);
                     bool bY = float.TryParse(message[3].ToString(), out y);
 
-                    Debug.Log(areaId + " " + x + " " + y);
+                    Debug.Log("Touch: "+areaId + " " + x + " " + y);
 
                     if (bTracking_id && bX && bY)
                     {
@@ -561,11 +563,11 @@ namespace BoidsSimulationOnGPU
                     bool bX = float.TryParse(message[2].ToString(), out x);
                     bool bY = float.TryParse(message[3].ToString(), out y);
 
-                    Debug.Log(areaId + " " + x + " " + y);
+                    Debug.Log("Proxity: "+areaId + " " + x + " " + y);
 
                     if (bTracking_id && bX && bY)
                     {
-                        Emit(x*6690, y*2160);
+                        Emit(x, y);
                     }
 
                 }

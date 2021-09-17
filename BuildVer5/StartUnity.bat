@@ -1,0 +1,1 @@
+start InternshipProject.exe -screen-width 1920 -screen-height 620

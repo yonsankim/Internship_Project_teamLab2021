@@ -209,6 +209,7 @@ Shader "Hidden/ImageEffectShader"
                     //baseColor + blendColor + 
                     //return   float4(BlendColor(baseColor.rgb, blendColor), baseColor.a);
                     //return blendColor + baseColor;
+                    
                     ////////////////OPTION 1
                     /*float4 blendedCurPrev = baseColor * _Ratio + prevColor * (1 - _Ratio);
                     baseColor = baseColor* _Ratio + blendedCurPrev * (1 - _Ratio);
